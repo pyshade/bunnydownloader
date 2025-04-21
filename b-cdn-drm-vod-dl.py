@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 import requests
 import yt_dlp
 
+# Script updated to handle both traditional DRM-protected streams and direct m3u8/mpd streams
+# The script now detects the stream type automatically and uses the appropriate method
+
 
 class BunnyVideoDRM:
     # user agent and platform related headers
@@ -63,16 +66,40 @@ class BunnyVideoDRM:
         embed_response = self.session.get(embed_url, headers=self.headers["embed"])
         embed_page = embed_response.text
         try:
-            self.server_id = re.search(
-                r"https://video-(.*?)\.mediadelivery\.net", embed_page
-            ).group(1)
+            # Extract the server ID from the HTML
+            server_match = re.search(r"https://video-(.*?)\.mediadelivery\.net", embed_page)
+            if server_match:
+                self.server_id = server_match.group(1)
+            else:
+                # Try to find the CDN URL in the HTML
+                cdn_match = re.search(r"https://vz-(.*?)\.b-cdn\.net", embed_page)
+                if cdn_match:
+                    self.server_id = cdn_match.group(1)
+                else:
+                    sys.exit(1)
         except AttributeError:
             sys.exit(1)
+            
         self.headers["ping|activate"].update(
             {"authority": f"video-{self.server_id}.mediadelivery.net"}
         )
-        search = re.search(r'contextId=(.*?)&secret=(.*?)"', embed_page)
-        self.context_id, self.secret = search.group(1), search.group(2)
+        
+        # Extract direct stream URL from the HTML
+        stream_url_match = re.search(r'(https://[^"\s]+\.(?:m3u8|mpd))', embed_page)
+        if stream_url_match:
+            self.direct_stream_url = stream_url_match.group(1)
+            print(f"Found direct stream URL: {self.direct_stream_url}")
+            # For compatibility with the rest of the code, set dummy values
+            self.context_id = "direct"
+            self.secret = "direct"
+        else:
+            # Try the old method for backward compatibility
+            search = re.search(r'contextId=(.*?)&secret=(.*?)"', embed_page)
+            if search:
+                self.context_id, self.secret = search.group(1), search.group(2)
+            else:
+                print("Error: Could not find stream information in the embed page.")
+                sys.exit(1)
         if name:
             self.file_name = f"{name}.mp4"
         else:
@@ -86,6 +113,13 @@ class BunnyVideoDRM:
         self.path = path if path else "~/Videos/Bunny CDN/"
 
     def prepare_dl(self) -> str:
+        # If we have a direct stream URL, we don't need to do the DRM preparation
+        if hasattr(self, 'direct_stream_url'):
+            print("Direct stream URL found, skipping DRM preparation")
+            self.session.close()
+            return "direct"
+            
+        # Traditional DRM method
         def ping(time: float, paused: str, res: str):
             md5_hash = md5(
                 f"{self.secret}_{self.context_id}_{time}_{paused}_{res}".encode("utf8")
@@ -129,24 +163,37 @@ class BunnyVideoDRM:
                 headers=self.headers["playlist"],
             )
 
-        ping(time=0, paused="true", res="0")
-        activate()
-        resolution = main_playlist()
-        video_playlist()
-        for i in range(0, 29, 4):  # first 28 seconds, arbitrary (check issue#11)
-            ping(
-                time=i + round(random(), 6),
-                paused="false",
-                res=resolution.split("x")[-1],
-            )
-        self.session.close()
-        return resolution
+        try:
+            ping(time=0, paused="true", res="0")
+            activate()
+            resolution = main_playlist()
+            video_playlist()
+            for i in range(0, 29, 4):  # first 28 seconds, arbitrary (check issue#11)
+                ping(
+                    time=i + round(random(), 6),
+                    paused="false",
+                    res=resolution.split("x")[-1],
+                )
+            self.session.close()
+            return resolution
+        except Exception as e:
+            print(f"Error during DRM preparation: {e}")
+            self.session.close()
+            sys.exit(1)
 
     def download(self):
-        resolution = self.prepare_dl()
-        url = [
-            f"https://iframe.mediadelivery.net/{self.guid}/{resolution}/video.drm?contextId={self.context_id}"
-        ]
+        url = []
+        # If we have a direct stream URL, use it directly
+        if hasattr(self, 'direct_stream_url'):
+            print("Using direct stream URL for download")
+            url = [self.direct_stream_url]
+        else:
+            # Otherwise use the traditional DRM method
+            resolution = self.prepare_dl()
+            url = [
+                f"https://iframe.mediadelivery.net/{self.guid}/{resolution}/video.drm?contextId={self.context_id}"
+            ]
+        
         ydl_opts = {
             "http_headers": {
                 "Referer": self.embed_url,
@@ -175,13 +222,12 @@ class BunnyVideoDRM:
 if __name__ == "__main__":
     video = BunnyVideoDRM(
         # insert the referer between the quotes below (address of your webpage)
-        referer="",
-        # paste your embed link
-        embed_url="",
+        referer="https://namasteserials.com/seriale/Las-fierbinti/880/48122",
+        embed_url="https://iframe.mediadelivery.net/embed/167542/72589e01-ff19-4089-b79e-8494443be5be",
         # you can override file name, no extension
         name="",
         # you can override download path
-        path=r"",
+        path=r"/Users/umberto/Desktop/bunny-cdn-drm-video-dl/Users/umberto/Desktop",
     )
     # video.session.close()
     video.download()

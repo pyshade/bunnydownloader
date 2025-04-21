@@ -48,6 +48,16 @@ a [session](https://requests.readthedocs.io/en/latest/user/advanced/#session-obj
 connection pooling) first of which is the embed page request, from which information are extracted such as the video
 name.
 
-After that, the download link (an HLS/M3U8 URL) is ready to be fed to `yt-dlp` to download the video segments, decrypt
-them (as Bunny CDN's "DRM" videos are encrypted with the AES-128 algorithm), and merge them into a single playable video
-file.
+The script now supports two methods of downloading:
+
+1. **Direct Stream Method**: If the embed page contains a direct m3u8/mpd stream URL, the script will use it directly without needing to perform the DRM authentication steps.
+
+2. **Traditional DRM Method**: For older or protected streams, the script will perform the necessary DRM authentication steps to obtain a valid playback URL.
+
+After obtaining the appropriate URL, it's fed to `yt-dlp` to download the video segments, decrypt them if needed (as Bunny CDN's "DRM" videos are encrypted with the AES-128 algorithm), and merge them into a single playable video file.
+
+## Recent Updates
+
+- **Automatic Stream Detection**: The script now automatically detects whether the video uses traditional DRM protection or direct m3u8/mpd streams.
+- **Improved Error Handling**: Better error messages and recovery mechanisms.
+- **Backward Compatibility**: Still works with older Bunny CDN embed formats that use contextId and secret parameters.
